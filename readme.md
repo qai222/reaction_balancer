@@ -48,3 +48,20 @@ such that the following is balanced:
    1. Atom mappings in USPTO came from `Indigo` which is not very reliable. 
    2. Atom mappings in Pistachio came from `NameRxn` which is more reliable when the reaction class is not `Unrecognized`.
    3. A set of atom mappers are wrapped in [ASKCOS](https://gitlab.com/mlpds_mit/ASKCOS/atom-mapping-services/-/tree/main/)
+3. Side product vs byproduct
+    ```
+    intended reaction:
+    A + B + C + D > E > AB + CD
+    AB: desired product
+    CD: byproduct
+    
+    side reaction
+    A + C > AC
+    AC: side product
+    ```
+
+4. Workflow
+   - reaction smi -> atom mapped reaction smi -> unmapped atoms -> byproducts
+5. Reaction classification
+   - [askcos](https://gitlab.com/mlpds_mit/ASKCOS/askcos-core/-/tree/dev/askcos/synthetic/reaction_classification)
+    and [api](https://askcos-demo.mit.edu/api/v2/?format=api)
