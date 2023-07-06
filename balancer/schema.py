@@ -38,7 +38,7 @@ class Reaction:
             reactants: tuple[Chem.Mol] = (),
             agents: tuple[Chem.Mol] = (),
             products: tuple[Chem.Mol] = (),
-            meta: dict[str, str] = None,
+            meta: dict[str, str | int | float] = None,
     ):
         """
         describing a reaction from pistachio
@@ -84,15 +84,13 @@ class Reaction:
             elements += [a.GetSymbol() for a in m.GetAtoms()]
         return set(elements)
 
-    def inspect(self) -> dict[str, bool]:
+    def inspect(self):
         """
-        get a "tag" dictionary for the reaction
+        update meta with a "tag" dictionary for the reaction
         
         use this to produce a csv file like
                                  line_number_in_pistachio,ra_ge_p,r_ge_p,r_unmapped,p_unmapped
         <reaction identifier>
-
-        :return: dict[<tag>, bool]
         """
         d = {
             # if r+a >= p
@@ -104,19 +102,20 @@ class Reaction:
             # any unmapped atoms in p
             "p_unmapped": any(has_unmapped_atom(m) for m in self.products),
         }
-        d.update(self.meta)
-        return d
+        self.meta.update(d)
 
     def as_dict(self) -> dict:
         """ for serialization """
-        return {
+        d = {
             "identifier": self.identifier,
             "reaction_smiles": self.reaction_smiles,
             "reactants_smiles": self.reactants_smiles,
             "agents_smiles": self.agents_smiles,
             "products_smiles": self.products_smiles,
-            "meta": self.meta,
         }
+        d_meta = {f"meta__{k}": v for k, v in self.meta.items()}
+        d.update(d_meta)
+        return d
 
     def get_molecules(self):
         """ run rdkit smiles to mol function """
