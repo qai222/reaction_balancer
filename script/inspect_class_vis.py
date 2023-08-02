@@ -27,7 +27,7 @@ df = pd.DataFrame.from_records(records)
 
 def smi2svg(reaction_smiles):
     rxn = ReactionFromSmarts(reaction_smiles, useSmiles=True)
-    d2d = MolDraw2DSVG(1200, 150)
+    d2d = MolDraw2DSVG(1200, 300)
     # d2d = MolDraw2DSVG(-1, -1)
     # dopts = d2d.drawOptions()
     d2d.DrawReaction(rxn, highlightByReactant=True)
@@ -55,6 +55,8 @@ app.layout = dbc.Row(
 
 @callback(Output('tbl_out', 'children'), Input('tbl', 'active_cell'))
 def update_graphs(active_cell):
+    if not active_cell:
+        return "select a set of fragments"
     i_row = active_cell['row']
     i_column = active_cell['column']
     frag = df.iloc[i_row, 0]
@@ -84,4 +86,4 @@ def update_graphs(active_cell):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)
