@@ -2,28 +2,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from rdkit import Chem
+import pandas as pd
+from pandas._typing import FilePath
 
+from balancer.utils import *
 
-class ReactionError(Exception):
-    """ use this for errors raised related to `Reaction` class """
-    pass
-
-
-def smiles_to_mol_list(chemicals_smiles: str) -> [Chem.Mol]:
-    """ convert a SMILES string to a list of `Chem.Mol` objects """
-    chemicals_mols = []
-    for individual_molecule_smiles in sorted(chemicals_smiles.split(".")):
-        mol = Chem.MolFromSmiles(individual_molecule_smiles)
-        if mol is None:
-            raise ReactionError(f"Failed to create molecule from smiles: {individual_molecule_smiles}")
-        chemicals_mols.append(mol)
-    return chemicals_mols
-
-
-def has_unmapped_atom(m: Chem.Mol) -> bool:
-    """ if this molecue has unmapped atom (atom map number == 0) """
-    return any(a.GetAtomMapNum() == 0 for a in m.GetAtoms())
+from rdkit.Chem.Draw import rdMolDraw2D, MolDraw2DSVG, MolDraw2DCairo
+from rdkit.Chem.AllChem import ReactionFromSmarts
 
 
 class Reaction:
@@ -32,9 +17,9 @@ class Reaction:
             self,
             identifier: str,
             reaction_smiles: str,
-            reactants_smiles: [str],
-            agents_smiles: [str],
-            products_smiles: [str],
+            reactants_smiles: str,
+            agents_smiles: str,
+            products_smiles: str,
             reactants: tuple[Chem.Mol] = (),
             agents: tuple[Chem.Mol] = (),
             products: tuple[Chem.Mol] = (),
@@ -65,6 +50,15 @@ class Reaction:
         self.reactants_smiles = reactants_smiles
         self.reaction_smiles = reaction_smiles
         # self.get_molecules()
+
+    def __repr__(self):
+        return f"{self.identifier}: {self.reaction_smiles}"
+
+    def __hash__(self):
+        return hash(self.reaction_smiles)
+
+    def __eq__(self, other: Reaction):
+        return self.reaction_smiles == other.reaction_smiles
 
     @property
     def has_molecules(self):
@@ -132,3 +126,44 @@ class Reaction:
         if identifier is None:
             identifier = reaction_smiles
         return cls(identifier, reaction_smiles, reactants_smiles, agents_smiles, products_smiles, meta=meta)
+
+    def get_unmapped_fragments(self, where: Literal['r', 'p', 'a']) -> tuple[list[Mol], list[list[Mol]]]:
+        if not self.has_molecules:
+            self.get_molecules()
+        if where.startswith('r'):
+            molecules = list(self.reactants)
+        elif where.startswith('p'):
+            molecules = list(self.products)
+        else:
+            molecules = list(self.reactants) + list(self.products)
+
+        frags = []
+        for mol in molecules:
+            frags.append(get_unmapped_fragments(mol, use_original_mol=True))
+        return molecules, frags
+
+    @staticmethod
+    def load_reactions_from_csv(csv_file: FilePath) -> list[Reaction]:
+        df = pd.read_csv(csv_file)
+        reactions = []
+        for record in df.to_dict(orient="records"):
+            meta = dict()
+            for k, v in record.items():
+                if k.startswith("meta__"):
+                    meta[k.lstrip("meta__")] = v
+            reaction = Reaction.from_reaction_smiles(
+                reaction_smiles=record['reaction_smiles'],
+                identifier=record['identifier'],
+                meta=meta
+            )
+            reactions.append(reaction)
+        return reactions
+
+    def get_reaction_svg(self) -> str:
+        rxn = ReactionFromSmarts(self.reaction_smiles, useSmiles=True)
+        d2d = MolDraw2DSVG(-1, -1)
+        # dopts = d2d.drawOptions()
+        d2d.DrawReaction(rxn, highlightByReactant=True)
+        d2d.FinishDrawing()
+        text = d2d.GetDrawingText()
+        return text

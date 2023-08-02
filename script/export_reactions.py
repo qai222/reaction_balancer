@@ -11,16 +11,11 @@ from tqdm import tqdm
 
 from balancer.schema import Reaction, ReactionError
 
-RDLogger.DisableLog('rdApp.*')  # https://github.com/rdkit/rdkit/issues/2683#issuecomment-538872880
 """
 inspect the reaction smiles from `pistachio.smi`, write out results to a `csv` file
-
-1. you may encounter SMILES strings that violate rdkit SMILES grammar (valence constraints most likely), 
-    capture such errors in `Reaction.meta`, they will be included in `Reaction.inspect`
-2. some reaction SMILES have cxsmiles (ChemAxon) annotations, some do not
-3. `Chem.Mol` objects will not be created in `Reaction.reactants/agents/products` until you run `Reaction.get_molecules`
-4. use `pandas` for creating `csv` file
 """
+
+RDLogger.DisableLog('rdApp.*')  # https://github.com/rdkit/rdkit/issues/2683#issuecomment-538872880
 
 PISTACHIO_VERSION = "2022Q4"
 
@@ -29,7 +24,8 @@ class PistachioError(Exception):
     pass
 
 
-def load_pistachio_mapped_smi(smi_file: FilePath, version: str, batch_size=10000, wdir: FilePath = "./", dump_reactions=False):
+def load_pistachio_mapped_smi(smi_file: FilePath, version: str, batch_size=10000, wdir: FilePath = "./",
+                              dump_reactions=False):
     os.makedirs(wdir, exist_ok=True)
     logfile = f"{wdir}/load_pistachio_mapped_smi-{version}.log"
     logger_id = logger.add(logfile)
@@ -78,10 +74,18 @@ def load_pistachio_mapped_smi(smi_file: FilePath, version: str, batch_size=10000
     logger.add(sys.stdout)
 
 
+def group_reactions():
+    """
+    need to first combine csvs
+    `head -n 1 meta-000001.csv > combined.out && tail -n+2 -q meta-*.csv >> combined.out`
+    """
+    df = pd.read_csv("../data/Pistachio_2022Q4/reactions/combined.csv")
+    df = df.drop_duplicates(subset=['reaction_smiles'])
+    for class_id, df_class in tqdm(df.groupby("meta__nextmove_class_identifier")):
+        df_class.to_csv(f"../data/Pistachio_2022Q4/reactions_by_class/{class_id}.csv", index=False)
+
+
 if __name__ == '__main__':
     load_pistachio_mapped_smi("../data/Pistachio_2022Q4/pistachio.smi", PISTACHIO_VERSION,
                               wdir="../data/Pistachio_2022Q4/reactions")
-    """
-    # to combine them into one csv
-    head -n 1 meta-000001.csv > combined.out && tail -n+2 -q meta-*.csv >> combined.out
-    """
+    group_reactions()
