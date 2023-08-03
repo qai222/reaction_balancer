@@ -71,7 +71,7 @@ def get_unmapped_fragments(mol: Mol, use_original_mol=False, auto_add_dummies=Fa
                         dummy_bond_type = mol.GetBondBetweenAtoms(original_idx, mna.GetIdx()).GetBondType()
                         fwd.AddBond(a.GetIdx(), dummy_index, order=dummy_bond_type)
             fwd = fwd.GetMol()
-            Chem.SanitizeMol(fwd)  # TODO this should remove excess implicit hydrogen atoms
+            # Chem.SanitizeMol(fwd)  # TODO this should remove excess implicit hydrogen atoms
             unmapped_fragments_with_dummies.append(fwd)
         return unmapped_fragments_with_dummies
 

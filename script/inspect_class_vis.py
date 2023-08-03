@@ -20,8 +20,13 @@ app = Dash(external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 records = []
 for f, info_list in frag_comb_to_reaction_info.items():
-    r = {"fragment set": f, "# of reactions": len(info_list)}
+    r = {
+        "fragment set": f,
+        "# of actual fragments": len([ff for ff in f.split('+') if '*' in ff]),
+        "# of reactions": len(info_list)
+    }
     records.append(r)
+records = sorted(records, key=lambda x: "# of reactions")
 df = pd.DataFrame.from_records(records)
 
 
@@ -42,13 +47,13 @@ table1 = dash_table.DataTable(df.to_dict('records'), [{"name": i, "id": i} for i
 
 app.layout = dbc.Row(
     [
-        dbc.Label('Inspection', className="col-12"),
+        dbc.Label(f'{reaction_class_identifier}: {reaction_class_name}', className="col-12"),
         dbc.Col(
             dbc.Container([
                 table1,
-            ]), className="col-2"
+            ]), className="col-4"
         ),
-        dbc.Col(id="tbl_out", className="col-9"),
+        dbc.Col(id="tbl_out", className="col-6"),
     ]
 )
 
