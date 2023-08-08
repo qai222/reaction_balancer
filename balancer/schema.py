@@ -258,7 +258,10 @@ class Fragment(BaseModel):
         fragments = Chem.GetMolFrags(mol_f, asMols=True, sanitizeFrags=False)
         for fragment in fragments:
             # see https://github.com/rdkit/rdkit/issues/46 and https://github.com/rdkit/rdkit/discussions/3901
-            SanitizeMol(fragment, sanitizeOps=SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_KEKULIZE)
+            try:
+                SanitizeMol(fragment, sanitizeOps=SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_KEKULIZE)
+            except Exception as e:
+                raise FragmentError(e.__str__())
         unmapped_fragments = [f for f in fragments if all(a.GetAtomMapNum() == 0 for a in f.GetAtoms())]
 
         for uf in unmapped_fragments:
