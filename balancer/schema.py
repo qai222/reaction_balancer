@@ -194,6 +194,10 @@ class Fragment(BaseModel):
     atom_properties: dict[int, dict[str, str]] = dict()
     """ atomic properties not included in json dump """
 
+    @property
+    def identifier(self):
+        return str(self.as_tuple())
+
     def as_tuple(self):
         return self.smiles, tuple(self.dummies_map_to)
 

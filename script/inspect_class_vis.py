@@ -1,93 +1,146 @@
-import json
-import random
+import pickle
 
 import dash_bootstrap_components as dbc
 import pandas as pd
-from dash import Dash, Input, Output, callback, dash_table
-from rdkit.Chem.AllChem import ReactionFromSmarts
-from rdkit.Chem.Draw import MolDraw2DSVG
+from dash import Dash, Input, Output, callback, dash_table, html
 
-MAX_REACTIONS_PER_FRAG = 10
+from balancer.schema import Fragment, Reaction
 
-with open("1.1.1.json", "r") as f:
-    data = json.load(f)
+_ROW_1_HEIGHT = "300px"
+_REACTION_SVG_WIDTH = 1200
+_REACTION_SVG_HEIGHT = 300
 
-reaction_class_name = data["reaction_class_name"]
-reaction_class_identifier = data['reaction_class_identifier']
-frag_comb_to_reaction_info = data["frag_comb_to_reaction_info"]
+with open("inspect.pkl", "rb") as f:
+    FRAGMENT_DICTIONARY, FRAGMENT_TUPLE_DICTIONARY, FRAG_TO_FRAG_TUPLES, REACTION_DICTIONARY = pickle.load(f)
+
+
+def get_fragment_tuple_list(fragment_identifier: str):
+    return FRAG_TO_FRAG_TUPLES[fragment_identifier]
+
+
+def get_n_reactions(fragment_tuple: tuple[str, ...]):
+    return FRAGMENT_TUPLE_DICTIONARY[fragment_tuple][0]
+
+
+def get_sample_reactions(fragment_tuple: tuple[str, ...]):
+    return [REACTION_DICTIONARY[i] for i in FRAGMENT_TUPLE_DICTIONARY[fragment_tuple][1]]
+
+
+def get_fragment_df():
+    records = []
+    for fid, (frag, num) in FRAGMENT_DICTIONARY.items():
+        frag: Fragment
+        r = {
+            "identifier": fid,
+            "SMILES": frag.smiles,
+            "dummies": ",".join(frag.dummies_map_to),
+            "occurrence": num,
+        }
+        records.append(r)
+    records = sorted(records, key=lambda x: x["occurrence"], reverse=True)
+    df = pd.DataFrame.from_records(records)
+    return df
+
+
+FRAGMENT_DF = get_fragment_df()
+
+
+def get_fragment_tuple_df(fragment_id: str):
+    ft_list = get_fragment_tuple_list(fragment_id)
+    records = []
+    for ft in ft_list:
+        r = {
+            'tuple': " + ".join(ft),
+            '# of reactions': get_n_reactions(ft),
+        }
+        records.append(r)
+    records = sorted(records, key=lambda x: r['# of reactions'], reverse=True)
+    df = pd.DataFrame.from_records(records)
+    return df
+
 
 app = Dash(external_stylesheets=[dbc.themes.BOOTSTRAP])
+TABLE1 = dash_table.DataTable(
+    FRAGMENT_DF.to_dict('records'), [{"name": i, "id": i} for i in FRAGMENT_DF.columns], id='tbl1',
+    style_data={'whiteSpace': 'normal', 'height': 'auto'},
+    style_table={'height': _ROW_1_HEIGHT, 'overflowY': 'auto'}
+)
 
-records = []
-for f, info_list in frag_comb_to_reaction_info.items():
-    r = {
-        "fragment set": f,
-        "# of actual fragments": len([ff for ff in f.split('+') if '*' in ff]),
-        "# of reactions": len(info_list)
-    }
-    records.append(r)
-records = sorted(records, key=lambda x: "# of reactions")
-df = pd.DataFrame.from_records(records)
+TABLE2 = dash_table.DataTable([], id='tbl2', style_data={'whiteSpace': 'normal', 'height': 'auto'},
+                              style_table={'height': _ROW_1_HEIGHT, 'overflowY': 'auto'})
 
+columns_format = [
+    dict(id='svg', name='svg', presentation='markdown'),
+    dict(id='id', name='reaction_id'),
+    dict(id='smiles', name='smiles')
+]
+TABLE3 = dash_table.DataTable([], id='tbl3', style_data={'whiteSpace': 'normal', 'height': 'auto'},
+                              style_table={'height': '400px', 'overflowY': 'auto'}, page_size=1, columns=columns_format,
 
-def smi2svg(reaction_smiles):
-    rxn = ReactionFromSmarts(reaction_smiles, useSmiles=True)
-    d2d = MolDraw2DSVG(1200, 300)
-    # d2d = MolDraw2DSVG(-1, -1)
-    # dopts = d2d.drawOptions()
-    d2d.DrawReaction(rxn, highlightByReactant=True)
-    # d2d.DrawReaction(rxn, highlightByReactant=False)
-    d2d.FinishDrawing()
-    svg = d2d.GetDrawingText().replace('svg:', '')
-    return svg
+                              markdown_options={
+                                  'html': True
+                              },
 
+                              )
 
-table1 = dash_table.DataTable(df.to_dict('records'), [{"name": i, "id": i} for i in df.columns], id='tbl',
-                              style_data={'whiteSpace': 'normal', 'height': 'auto'}, )
-
-app.layout = dbc.Row(
+ROW1 = dbc.Row(
     [
-        dbc.Label(f'{reaction_class_identifier}: {reaction_class_name}', className="col-12"),
         dbc.Col(
-            dbc.Container([
-                table1,
-            ]), className="col-4"
+            TABLE1,
+            className="p-3",
+            width=6,
         ),
-        dbc.Col(id="tbl_out", className="col-6"),
-    ]
+        dbc.Col(
+            TABLE2,
+            className="p-3",
+            width=6
+        ),
+    ], className="px-3")
+
+ROW2 = dbc.Row(
+    dbc.Col(
+        TABLE3,
+        className="px-6",
+        width=12
+    ),
+)
+
+app.layout = html.Div(
+    [ROW1, ROW2]
 )
 
 
-@callback(Output('tbl_out', 'children'), Input('tbl', 'active_cell'))
-def update_graphs(active_cell):
+@callback(Output('tbl2', 'data'), Input('tbl1', 'active_cell'))
+def update_tbl2(active_cell):
     if not active_cell:
-        return "select a set of fragments"
+        return []
     i_row = active_cell['row']
-    i_column = active_cell['column']
-    frag = df.iloc[i_row, 0]
-    svgs = frag_comb_to_reaction_info[frag]
-    if len(svgs) > MAX_REACTIONS_PER_FRAG:
-        random.seed(42)
-        svgs = random.sample(svgs, MAX_REACTIONS_PER_FRAG)
+    frag_id = FRAGMENT_DF.iloc[i_row, 0]
 
-    columns_format = [
-        dict(id='reaction', name='reaction', presentation='markdown'),
-        dict(id='pistachio_id', name='pistachio_id'),
-    ]
+    df = get_fragment_tuple_df(frag_id)
+    return df.to_dict('records')
+
+
+@callback(Output('tbl3', 'data'), Input('tbl2', 'active_cell'), Input('tbl2', 'data'))
+def update_reaction(active_cell, tbl2_data):
+    if not active_cell:
+        return []
+    i_row = active_cell['row']
+    tbl2_record = tbl2_data[i_row]
+    frag_tuple_repr = tbl2_record['tuple']
+    frag_tuple = tuple([*frag_tuple_repr.split(" + ")])
+    reactions = get_sample_reactions(frag_tuple)
+    assert len(reactions) == tbl2_record["# of reactions"]
     records = []
-    for smi, rid in svgs:
+    for r in reactions:
+        r: Reaction
         record = {
-            "pistachio_id": rid,
-            "reaction": smi2svg(smi),
+            "id": r.identifier,
+            "smiles": r.reaction_smiles,
+            "svg": r.get_reaction_svg(width=_REACTION_SVG_WIDTH, height=_REACTION_SVG_HEIGHT)
         }
         records.append(record)
-    return dash_table.DataTable(
-        markdown_options={
-            'html': True
-        },
-        data=pd.DataFrame.from_records(records).to_dict("records"),
-        columns=columns_format,
-    )
+    return records
 
 
 if __name__ == "__main__":
