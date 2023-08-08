@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import Literal
-
 import pandas as pd
+from collections import defaultdict
 from pandas._typing import FilePath
+from pydantic import BaseModel
+from rdkit.Chem import SanitizeFlags, SanitizeMol
+from rdkit.Chem.AllChem import ReactionFromSmarts
+from rdkit.Chem.Draw import MolDraw2DSVG
 
 from balancer.utils import *
-
-from rdkit.Chem.Draw import rdMolDraw2D, MolDraw2DSVG, MolDraw2DCairo
-from rdkit.Chem.AllChem import ReactionFromSmarts
 
 
 class Reaction:
@@ -127,7 +127,7 @@ class Reaction:
             identifier = reaction_smiles
         return cls(identifier, reaction_smiles, reactants_smiles, agents_smiles, products_smiles, meta=meta)
 
-    def get_unmapped_fragments(self, where: Literal['r', 'p', 'a']) -> tuple[list[Mol], list[list[Mol]]]:
+    def get_unmapped_fragments(self, where: Literal['r', 'p', 'a']) -> tuple[list[Mol], list[list[Fragment]]]:
         if not self.has_molecules:
             self.get_molecules()
         if where.startswith('r'):
@@ -137,10 +137,23 @@ class Reaction:
         else:
             molecules = list(self.reactants) + list(self.products)
 
-        frags = []
+        frag_lol = []
         for mol in molecules:
-            frags.append(get_unmapped_fragments(mol, use_original_mol=True))
-        return molecules, frags
+            frag_lol.append(Fragment.get_unmapped_fragments(mol))
+        return molecules, frag_lol
+
+    def get_unmapped_fragments_unique_flat(self, where: Literal['r', 'p', 'a'], exclude_whole=True) -> list[Fragment]:
+        _, frag_lol = self.get_unmapped_fragments(where=where)
+        unique = []
+        for frag_lst in frag_lol:
+            for frag in frag_lst:
+                if frag not in unique:
+                    if exclude_whole and "*" not in frag.smiles:
+                        continue
+                    else:
+                        unique.append(frag)
+        unique = sorted(unique, key=lambda x: x.as_tuple())
+        return unique
 
     @staticmethod
     def load_reactions_from_csv(csv_file: FilePath) -> list[Reaction]:
@@ -159,11 +172,169 @@ class Reaction:
             reactions.append(reaction)
         return reactions
 
-    def get_reaction_svg(self) -> str:
+    def get_reaction_svg(self, width=-1, height=-1) -> str:
         rxn = ReactionFromSmarts(self.reaction_smiles, useSmiles=True)
-        d2d = MolDraw2DSVG(-1, -1)
-        # dopts = d2d.drawOptions()
+        d2d = MolDraw2DSVG(width, height)
         d2d.DrawReaction(rxn, highlightByReactant=True)
+        d2d.FinishDrawing()
+        text = d2d.GetDrawingText()
+        return text
+
+
+class Fragment(BaseModel):
+    smiles: str
+    """ canonical smiles with dummies """
+
+    dummies_map_to: list[str]
+    """ symbols that dummies in canonical smiles are mapped to """
+
+    mol_json: str
+    """ json dump of the fragment Mol object, which may be not canonical """
+
+    atom_properties: dict[int, dict[str, str]] = dict()
+    """ atomic properties not included in json dump """
+
+    def as_tuple(self):
+        return self.smiles, tuple(self.dummies_map_to)
+
+    def as_dict(self):
+        return {"smiles": self.smiles, "dummies_map_to": self.dummies_map_to}
+
+    def __eq__(self, other: Fragment):
+        return self.as_tuple() == other.as_tuple()
+
+    def __hash__(self):
+        return hash(self.as_tuple())
+
+    def __repr__(self):
+        return f"SMILES: {self.smiles} | DUMMIES: {self.dummies_map_to}"
+
+    @staticmethod
+    def get_unmapped_fragments(mol: Mol) -> list[Fragment]:
+        """
+        - Given a molecule, find the molecular fragments in which all atoms are unmapped.
+        - A terminal atom of an unmapped molecular fragment is an atom has at least one mapped atom neighbor
+        in the original molecule.
+        - The mapped nearest neighbors of a terminal atom are noted with symbol `*` (`add_Dummies=True`)
+        - The `*`s in the canonical smiles of a molecular fragment are assigned the following properties
+
+        :param mol:
+        :return:
+        """
+        # first creat a copy
+        mol = Mol(mol)
+        for a in mol.GetAtoms():
+            a.SetProp("frag_tag", "non-terminal")
+            a.SetProp("original_index", str(a.GetIdx()))
+
+        # identifier the bonds that connect a mapped atom with an unmapped atom
+        bonds_of_interest = []
+
+        # dict[<terminal_atom_original_index>]->[(<BondType>, <nn_symbol>, <nn_idx>, <nn_atomic_number>), ]
+        # ex. lookup_table[3] -> [(Chem.rdchem.BondType.SINGLE, "C", 2, 6), ]
+        lookup_table = defaultdict(list)
+        for bond in mol.GetBonds():
+            a1 = bond.GetBeginAtom()
+            a2 = bond.GetEndAtom()
+            a1: Atom
+            a2: Atom
+            a1_mn = a1.GetAtomMapNum()
+            a2_mn = a2.GetAtomMapNum()
+            if a1_mn * a2_mn == 0 and a1_mn != a2_mn:
+                if a1_mn == 0:
+                    terminal_atom = a1
+                    terminal_nn = a2
+                else:
+                    terminal_atom = a2
+                    terminal_nn = a1
+                # a terminal atom is an unmapped atom has at least one mapped neighboring atom
+                terminal_atom.SetProp("frag_tag", "terminal")
+                bonds_of_interest.append(bond)
+                lookup_table[terminal_atom.GetIdx()].append(
+                    [bond.GetBondType(), terminal_nn.GetSymbol(), terminal_nn.GetIdx(), terminal_nn.GetAtomicNum()])
+                # [bond.GetBondType()].append((terminal_nn.GetSymbol(), terminal_nn.GetIdx()))
+
+        mol_f = Chem.FragmentOnBonds(mol, (b.GetIdx() for b in bonds_of_interest), addDummies=True)
+        fragments = Chem.GetMolFrags(mol_f, asMols=True, sanitizeFrags=False)
+        for fragment in fragments:
+            # see https://github.com/rdkit/rdkit/issues/46 and https://github.com/rdkit/rdkit/discussions/3901
+            SanitizeMol(fragment, sanitizeOps=SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_KEKULIZE)
+        unmapped_fragments = [f for f in fragments if all(a.GetAtomMapNum() == 0 for a in f.GetAtoms())]
+
+        for uf in unmapped_fragments:
+            uf: Chem.Mol
+            terminal_atoms = []
+            for a in uf.GetAtoms():
+                try:
+                    frag_tag = a.GetProp('frag_tag')
+                except KeyError:
+                    continue
+                if frag_tag == 'terminal':
+                    terminal_atoms.append(a)
+
+            for terminal_atom in terminal_atoms:
+                dummies_and_bonds = [(a, uf.GetBondBetweenAtoms(a.GetIdx(), terminal_atom.GetIdx())) for a in
+                                     terminal_atom.GetNeighbors() if a.GetSymbol() == "*"]
+                assignments = lookup_table[int(terminal_atom.GetProp("original_index"))]
+                n_assignments = len(assignments)
+                assert n_assignments == len(dummies_and_bonds)
+
+                already_assigned_dummies = set()
+                for assign in assignments:
+                    nn_bt, nn_sym, nn_idx, nn_atomic_number = assign
+                    for i_dummy in range(n_assignments):
+                        if i_dummy in already_assigned_dummies:
+                            continue
+                        dummy_atom, bond = dummies_and_bonds[i_dummy]
+                        dummy_atom.SetIsotope(0)
+                        if bond.GetBondType() == nn_bt:
+                            dummy_atom.SetProp("original_index", str(nn_idx))
+                            dummy_atom.SetProp("original_symbol", nn_sym)
+                            dummy_atom.SetProp("original_atomic_number", str(nn_atomic_number))
+                            dummy_atom.SetProp("frag_tag", f"terminal-nn")
+                            already_assigned_dummies.add(i_dummy)
+                assert len(already_assigned_dummies) == n_assignments
+
+        result = []
+        for uf in unmapped_fragments:
+            can_smi = Chem.MolToSmiles(uf, canonical=True)
+            # get a tuple of atomic symbols for dummies in can_smi
+            dummies_map_to = []
+            for can_atom_order in Chem.CanonicalRankAtoms(uf):
+                a = uf.GetAtomWithIdx(can_atom_order)
+                if a.GetSymbol() == "*":
+                    dummies_map_to.append(a.GetProp("original_symbol"))
+            atom_properties = dict()
+            for a in uf.GetAtoms():
+                atom_properties[a.GetIdx()] = a.GetPropsAsDict(includePrivate=False, includeComputed=False)
+            frag = Fragment(
+                smiles=can_smi,
+                dummies_map_to=dummies_map_to,
+                mol_json=Chem.MolToJSON(uf),
+                atom_properties=atom_properties
+            )
+            result.append(frag)
+        return result
+
+    def get_mol(self):
+        frag_mol = Chem.JSONToMols(self.mol_json)[0]
+        frag_mol: Mol
+        for aid, props in self.atom_properties.items():
+            a = frag_mol.GetAtomWithIdx(aid)
+            a: Atom
+            for k, v in props.items():
+                a.SetProp(k, v)
+        return frag_mol
+
+    def get_svg(self, width=-1, height=-1, show_terminal_nn=True):
+        frag_mol = self.get_mol()
+        d2d = MolDraw2DSVG(width, height)
+        if show_terminal_nn:
+            for a in frag_mol.GetAtoms():
+                if a.GetSymbol() == "*":
+                    a: Atom
+                    a.SetIsotope(int(a.GetProp("original_atomic_number")))
+        d2d.DrawMolecule(frag_mol)
         d2d.FinishDrawing()
         text = d2d.GetDrawingText()
         return text
