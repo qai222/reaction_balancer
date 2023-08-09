@@ -72,7 +72,9 @@ TABLE2 = dash_table.DataTable([], id='tbl2', style_data={'whiteSpace': 'normal',
 columns_format = [
     dict(id='svg', name='svg', presentation='markdown'),
     dict(id='id', name='reaction_id'),
-    dict(id='smiles', name='smiles')
+    dict(id='smiles', name='smiles'),
+    dict(id='class_id', name='class_id'),
+    dict(id='class_name', name='class_name'),
 ]
 TABLE3 = dash_table.DataTable([], id='tbl3', style_data={'whiteSpace': 'normal', 'height': 'auto'},
                               style_table={'height': '400px', 'overflowY': 'auto'}, page_size=1, columns=columns_format,
@@ -137,6 +139,8 @@ def update_reaction(active_cell, tbl2_data):
         record = {
             "id": r.identifier,
             "smiles": r.reaction_smiles,
+            "class_id": r.meta['nextmove_class_identifier'],
+            "class_name": r.meta['nextmove_class'],
             "svg": r.get_reaction_svg(width=_REACTION_SVG_WIDTH, height=_REACTION_SVG_HEIGHT)
         }
         records.append(record)
