@@ -1,19 +1,23 @@
 import glob
+import pickle
 import random
 from collections import defaultdict
 from os.path import basename
 from typing import Literal
-from tqdm import tqdm
+
 from loguru import logger
+from tqdm import tqdm
 
 from balancer.schema import Reaction
 
-MAX_REACTION_PER_FRAGMENT_TUPLE = 50
+MAX_REACTION_PER_FRAGMENT_TUPLE = 20
+
 
 def get_line_count(fn):
     with open(fn, "rb") as f:
         num_lines = sum(1 for _ in f)
     return num_lines
+
 
 REACTION_CLASS_CSVS = [
     fn for fn in glob.glob("../data/Pistachio_2022Q4/reactions_by_class/*.csv")
@@ -33,7 +37,6 @@ def accept_reaction(reaction: Reaction) -> bool:
         return False
 
 
-
 def inspect_reactions(
         reactions: list[Reaction],
         inspect_fragments_from: Literal["r", "p", "a"] = "r",
@@ -46,10 +49,15 @@ def inspect_reactions(
     fragment_dictionary = dict()  # id -> example fragment object, occurrence
     fragment_tuple_dictionary = defaultdict(list)  # frag tuple -> list[reaction_id]
     for reaction in tqdm(reactions.values()):
-        unique_fragments = reaction.get_unmapped_fragments_unique_flat(
-            where=inspect_fragments_from,
-            exclude_whole=exclude_whole_molecules_in_fragmentation
-        )
+        try:
+            unique_fragments = reaction.get_unmapped_fragments_unique_flat(
+                where=inspect_fragments_from,
+                exclude_whole=exclude_whole_molecules_in_fragmentation
+            )
+        except Exception as e:
+            logger.error(f"exception working on: {reaction}")
+            logger.error(e)
+            continue
         for uf in unique_fragments:
             if uf.identifier not in fragment_dictionary:
                 fragment_dictionary[uf.identifier] = [uf, 1]
@@ -78,7 +86,7 @@ def inspect_reactions(
     return fragment_dictionary, fragment_tuple_dictionary_slim, frag_to_frag_tuples, reaction_dictionary
 
 
-def inspect_all(n_class=5, dump_pkl_as=None, from_most_popular=True):
+def inspect_all(reaction_coverage=1.0, dump_pkl_as=None):
     """
     inspect molecular fragments
 
@@ -88,19 +96,25 @@ def inspect_all(n_class=5, dump_pkl_as=None, from_most_popular=True):
     :return:
     """
     reactions = []
-    if from_most_popular:
-        csvs = REACTION_CLASS_CSVS
-    else:
-        random.seed(42)
-        csvs = random.sample(REACTION_CLASS_CSVS, n_class)
+    n_total_reactions = 0
+    for csv in REACTION_CLASS_CSVS:
+        n_total_reactions += get_line_count(csv)
+    use_csvs = []
+    n_use_reactions = 0
+    for csv in REACTION_CLASS_CSVS:
+        n_use_reactions += get_line_count(csv)
+        coverage = n_use_reactions / n_total_reactions
+        use_csvs.append(csv)
+        if coverage >= reaction_coverage:
+            logger.info(f"actual coverage: {coverage}")
+            break
     i = 0
-    for csv in csvs:
+    for csv in use_csvs:
         r_cls_id = basename(csv).rstrip(".csv")
         reactions += Reaction.load_reactions_from_csv(csv)
-        logger.info(f"loading: {r_cls_id}, loaded classes: {i}")
+        logger.info(
+            f"loading: {r_cls_id}, loaded classes: {i}, loaded # of reactions: {len(reactions)}/{n_total_reactions} ({len(reactions) / n_total_reactions})")
         i += 1
-        if i >= n_class:
-            break
     return_data = inspect_reactions(reactions)
     if dump_pkl_as:
         with open(dump_pkl_as, "wb") as f:
@@ -109,10 +123,6 @@ def inspect_all(n_class=5, dump_pkl_as=None, from_most_popular=True):
 
 
 if __name__ == '__main__':
-    import pickle
-
-    # data = inspect_one("1.1.1")
-    # with open("1.1.1.pkl", "wb") as f:
-    #     pickle.dump(data, f)
-
-    data = inspect_all(5, dump_pkl_as="inspect.pkl", from_most_popular=False)
+    logger.add(__file__.replace(".py", ".log"))
+    logger.remove(0)
+    data = inspect_all(1.0, dump_pkl_as="inspect.pkl")
