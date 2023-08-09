@@ -54,7 +54,7 @@ def get_fragment_tuple_df(fragment_id: str):
             '# of reactions': get_n_reactions(ft),
         }
         records.append(r)
-    records = sorted(records, key=lambda x: r['# of reactions'], reverse=True)
+    records = sorted(records, key=lambda x: x['# of reactions'], reverse=True)
     df = pd.DataFrame.from_records(records)
     return df
 
