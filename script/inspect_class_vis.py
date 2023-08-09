@@ -130,7 +130,7 @@ def update_reaction(active_cell, tbl2_data):
     frag_tuple_repr = tbl2_record['tuple']
     frag_tuple = tuple([*frag_tuple_repr.split(" + ")])
     reactions = get_sample_reactions(frag_tuple)
-    assert len(reactions) == tbl2_record["# of reactions"]
+    assert get_n_reactions(frag_tuple) == tbl2_record["# of reactions"], f"{get_n_reactions(frag_tuple)}, {tbl2_record['# of reactions']}"
     records = []
     for r in reactions:
         r: Reaction
